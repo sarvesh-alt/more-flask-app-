@@ -206,7 +206,7 @@ Resources:
       HealthCheckPort: "5000"
       HealthCheckPath: /
       Matcher:
-        HttpCode: 200
+        HttpCode: "200"
       TargetType: ip
 
   # ALB Listener
