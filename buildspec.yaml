@@ -14,7 +14,7 @@ phases:
     commands:
       - echo "Building the Docker image..."
       - docker build -t more-flask-app .
-      - docker tag more-flask-app:latest 615299769322.dkr.ecr.us-east-1.amazonaws.com/more-flask-app:latest
+      - docker tag more-flask-app:latest 615299769322.dkr.ecr.ca-central-1.amazonaws.com/more-flask-app:latest
   post_build:
     commands:
       - echo "Pushing the Docker image to ECR..."
