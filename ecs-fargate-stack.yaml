@@ -220,14 +220,6 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref MoreTargetGroup
 
-  # ECR Repository with image scanning enabled
-  MoreECRRepository:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: more-flask-app
-      ImageScanningConfiguration:
-        scanOnPush: true
-
   # IAM Role for ECS Task Execution
   ECSExecutionRole:
     Type: AWS::IAM::Role
