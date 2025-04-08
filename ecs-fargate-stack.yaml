@@ -1,0 +1,295 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Deploy a Flask app on ECS Fargate with an ALB and custom VPC
+
+Parameters:
+  VpcCIDR:
+    Description: CIDR block for VPC
+    Type: String
+    Default: 10.0.0.0/16
+
+Resources:
+  # VPC and Subnets
+  MoreVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: more-vpc
+
+  MorePublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MoreVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: more-public-subnet-1
+
+  MorePublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MoreVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: more-public-subnet-2
+
+  MorePrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MoreVPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: more-private-subnet-1
+
+  MorePrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MoreVPC
+      CidrBlock: 10.0.4.0/24
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: more-private-subnet-2
+
+  # Internet Gateway and Route Tables
+  MoreInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: more-igw
+
+  MoreVPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MoreVPC
+      InternetGatewayId: !Ref MoreInternetGateway
+
+  MorePublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MoreVPC
+      Tags:
+        - Key: Name
+          Value: more-public-rt
+
+  MorePublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: MoreVPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref MorePublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref MoreInternetGateway
+
+  MorePublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref MorePublicSubnet1
+      RouteTableId: !Ref MorePublicRouteTable
+
+  MorePublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref MorePublicSubnet2
+      RouteTableId: !Ref MorePublicRouteTable
+
+  MoreNATGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: MoreVPCGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  MoreNATGateway:
+    Type: AWS::EC2::NatGateway
+    DependsOn: MorePublicSubnet1RouteTableAssociation
+    Properties:
+      AllocationId: !GetAtt MoreNATGatewayEIP.AllocationId
+      SubnetId: !Ref MorePublicSubnet1
+      Tags:
+        - Key: Name
+          Value: more-nat-gateway
+
+  MorePrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MoreVPC
+      Tags:
+        - Key: Name
+          Value: more-private-rt
+
+  MorePrivateRoute:
+    Type: AWS::EC2::Route
+    DependsOn: MoreNATGateway
+    Properties:
+      RouteTableId: !Ref MorePrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref MoreNATGateway
+
+  MorePrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref MorePrivateSubnet1
+      RouteTableId: !Ref MorePrivateRouteTable
+
+  MorePrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref MorePrivateSubnet2
+      RouteTableId: !Ref MorePrivateRouteTable
+
+  # Security Groups
+  MoreALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for the ALB (allows inbound HTTP)
+      VpcId: !Ref MoreVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: more-alb-sg
+
+  MoreBackendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ECS tasks (allow traffic from ALB on port 5000)
+      VpcId: !Ref MoreVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          SourceSecurityGroupId: !Ref MoreALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: more-backend-sg
+
+  # Application Load Balancer
+  MoreLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: more-alb
+      Scheme: internet-facing
+      Subnets:
+        - !Ref MorePublicSubnet1
+        - !Ref MorePublicSubnet2
+      SecurityGroups:
+        - !Ref MoreALBSecurityGroup
+      Type: application
+      Tags:
+        - Key: Name
+          Value: more-alb
+
+  # Target Group for Fargate (target type: ip)
+  MoreTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: more-tg
+      Port: 5000
+      Protocol: HTTP
+      VpcId: !Ref MoreVPC
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: "5000"
+      HealthCheckPath: /
+      Matcher:
+        HttpCode: 200
+      TargetType: ip
+
+  # ALB Listener
+  MoreListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref MoreLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref MoreTargetGroup
+
+  # ECR Repository with image scanning enabled
+  MoreECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: more-flask-app
+      ImageScanningConfiguration:
+        scanOnPush: true
+
+  # IAM Role for ECS Task Execution
+  ECSExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  # ECS Cluster
+  MoreECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: more-ecs-cluster
+
+  # ECS Task Definition
+  MoreECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: more-flask-app-task
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: "256"
+      Memory: "512"
+      ExecutionRoleArn: !GetAtt ECSExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: flask-app
+          Image: "615299769322.dkr.ecr.ca-central-1.amazonaws.com/more-flask-app:latest"
+          PortMappings:
+            - ContainerPort: 5000
+          Essential: true
+
+  # ECS Service
+  MoreECSService:
+    Type: AWS::ECS::Service
+    DependsOn: MoreListener
+    Properties:
+      ServiceName: more-flask-app-service
+      Cluster: !Ref MoreECSCluster
+      TaskDefinition: !Ref MoreECSTaskDefinition
+      LaunchType: FARGATE
+      DesiredCount: 2
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:
+            - !Ref MorePrivateSubnet1
+            - !Ref MorePrivateSubnet2
+          SecurityGroups:
+            - !Ref MoreBackendSecurityGroup
+          AssignPublicIp: DISABLED
+      LoadBalancers:
+        - ContainerName: flask-app
+          ContainerPort: 5000
+          TargetGroupArn: !Ref MoreTargetGroup
+
+Outputs:
+  LoadBalancerDNS:
+    Description: "The DNS name of the ALB"
+    Value: !GetAtt MoreLoadBalancer.DNSName
