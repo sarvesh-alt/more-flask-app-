@@ -1,10 +1,20 @@
 from flask import Flask
+import socket
 
 app = Flask(__name__)
+hostname = socket.gethostname()
+ip_address = socket.gethostbyname(hostname)
 
 @app.route('/')
-def home():
-    return "Hello from More ECS Container."
+def hello_cloud():
+  return 'Welcome to More Final Test API Server'
+  
+@app.route('/host')
+def host_name():
+  return hostname
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+@app.route('/ip')
+def host_ip():
+  return ip_address
+
+app.run(host='0.0.0.0')
